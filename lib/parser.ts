@@ -1,18 +1,15 @@
 import type { TimeBlock, GoalCategory, DayOfWeek } from './types';
 
-const DAY_PATTERNS: Record<DayOfWeek, RegExp> = {
-  mon: /\bmon(day)?\b/i,
-  tue: /\btu(e|es|esday)?\b/i,
-  wed: /\bwed(nesday)?\b/i,
-  thu: /\bthu(r|rs|rsday)?\b/i,
-  fri: /\bfri(day)?\b/i,
-  sat: /\bsat(urday)?\b/i,
-  sun: /\bsun(day)?\b/i,
+const DAY_MAP: Record<string, DayOfWeek> = {
+  monday: 'mon', tuesday: 'tue', wednesday: 'wed', thursday: 'thu',
+  friday: 'fri', saturday: 'sat', sunday: 'sun',
+  mon: 'mon', tue: 'tue', wed: 'wed', thu: 'thu',
+  fri: 'fri', sat: 'sat', sun: 'sun',
 };
 
-const SPIRITUAL_KEYWORDS = /pray|prayer|meditat|church|worship|journal|bible|gratitude|devotion|spiritual|read.*word|quiet.*time|fast/i;
-const BUSINESS_KEYWORDS = /email|call|meeting|client|work|build|sales|review|strategy|prospect|follow.*up|crm|invoice|pitch|content|post|record|edit|film|brand|launch|market/i;
-const BODY_KEYWORDS = /gym|workout|run|walk|jog|eat|meal|prep|sleep|recovery|stretch|lift|train|cardio|protein|water|rest|nap|cook|nutrition|macro/i;
+const SPIRITUAL_KEYWORDS = /pray|prayer|meditat|church|worship|journal|bible|gratitude|devotion|spiritual|quiet.?time|fast|scripture/i;
+const BUSINESS_KEYWORDS = /email|call|meeting|client|work|build|sales|review|strategy|prospect|follow.?up|crm|invoice|pitch|content|post|record|edit|film|brand|launch|market|research|product|hook|video|tiktok|shopify|ecomm/i;
+const BODY_KEYWORDS = /gym|workout|run|walk|jog|eat|meal|prep|sleep|recovery|stretch|lift|train|cardio|protein|water|rest|nap|cook|nutrition|macro|shower|coffee/i;
 
 function parseTime(raw: string): string | null {
   const match = raw.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
@@ -52,20 +49,47 @@ function detectCategory(text: string): GoalCategory | 'personal' {
   return 'personal';
 }
 
+function cleanTitle(raw: string): string {
+  return raw
+    // Remove full day names first (order matters — longest first)
+    .replace(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
+    // Remove time patterns like 8am, 8:30am, 10PM
+    .replace(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi, '')
+    // Remove duration phrases like "3 hours", "45 mins", "an hour", "half hour"
+    .replace(/\b\d+(?:\.\d+)?\s*(?:hours?|hrs?|minutes?|mins?)\b/gi, '')
+    .replace(/\ban\s+hour\b/gi, '')
+    .replace(/\bhalf\s+(?:an\s+)?hour\b/gi, '')
+    // Remove orphaned connector words left after stripping
+    .replace(/\bat\s+for\b/gi, '')
+    .replace(/\bfor\s+(?:hours?|mins?|minutes?)?\s*$/gi, '')
+    .replace(/\bat\s*$/gi, '')
+    .replace(/\bfor\s*$/gi, '')
+    .replace(/\bfor\b(?=\s|$)/gi, '')
+    // Clean up leading noise words
+    .replace(/^\s*(i |then |and |also |at |for |to |a )/i, '')
+    // Collapse multiple spaces
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 export function parseBrainDump(text: string): TimeBlock[] {
   const blocks: TimeBlock[] = [];
-  const sentences = text.split(/[.,;!\n]+/).filter(s => s.trim().length > 5);
+  // Split on newlines or sentence-ending punctuation
+  const lines = text.split(/[\n]+/).filter(s => s.trim().length > 4);
 
   let currentDay: DayOfWeek = 'mon';
 
-  for (const sentence of sentences) {
-    const s = sentence.trim();
+  for (const line of lines) {
+    const s = line.trim();
 
-    for (const [day, pattern] of Object.entries(DAY_PATTERNS) as [DayOfWeek, RegExp][]) {
-      if (pattern.test(s)) { currentDay = day; break; }
+    // Detect day — check full word match at start or anywhere
+    const dayMatch = s.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)\b/i);
+    if (dayMatch) {
+      currentDay = DAY_MAP[dayMatch[1].toLowerCase()];
     }
 
-    const timeMatch = s.match(/\b(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\b/i);
+    // Must have a time to create a block
+    const timeMatch = s.match(/\b(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i);
     if (!timeMatch) continue;
 
     const startTime = parseTime(timeMatch[1]);
@@ -75,16 +99,15 @@ export function parseBrainDump(text: string): TimeBlock[] {
     const endTime = addMinutes(startTime, duration);
     const category = detectCategory(s);
 
-    const title = s
-      .replace(/\b(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\b/gi, '')
-      .replace(/(mon|tue|wed|thu|fri|sat|sun)(day)?/gi, '')
-      .replace(/\b(\d+)\s*(min|minute|hr|hour)s?\b/gi, '')
-      .replace(/\b(an|a|the)\s+(hour|minute)\b/gi, '')
-      .replace(/\s{2,}/g, ' ')
-      .trim()
-      .replace(/^(i |then |and |also |at |for )/i, '')
-      .trim();
+    // Build title — if line has a colon separator like "Monday: Deep Work at 8:30am"
+    // use the part after the colon; otherwise clean the whole line
+    let titleSource = s;
+    const colonIdx = s.indexOf(':');
+    if (colonIdx > -1 && colonIdx < 20) {
+      titleSource = s.slice(colonIdx + 1).trim();
+    }
 
+    const title = cleanTitle(titleSource);
     if (!title || title.length < 3) continue;
 
     blocks.push({
